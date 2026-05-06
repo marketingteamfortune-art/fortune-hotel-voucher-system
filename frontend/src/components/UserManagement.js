@@ -26,9 +26,10 @@ const UserManagement = ({ token }) => {
   const [form, setForm] = useState({ email: '', password: '', role: '', restaurantName: '' });
   const [message, setMessage] = useState('');
 
-  useEffect(() => {
-    fetchUsers();
-  }, []);
+ useEffect(() => {
+  fetchUsers();
+  // eslint-disable-next-line
+}, []);
 
   const fetchUsers = async () => {
     try {

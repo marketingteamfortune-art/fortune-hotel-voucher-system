@@ -165,7 +165,6 @@ function App() {
     );
   }
 
-  const getDashboardContent = () => {
     switch (user?.role) {
       case 'front_office': return <FrontOffice token={token} />;
       case 'restaurant_manager': return <RestaurantModule token={token} user={user} />;

@@ -20,9 +20,10 @@ const AccountsModule = ({ token }) => {
   const [vouchers, setVouchers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchVouchers();
-  }, []);
+ useEffect(() => {
+  fetchVouchers();
+  // eslint-disable-next-line
+}, []);
 
   const fetchVouchers = async () => {
     try {
