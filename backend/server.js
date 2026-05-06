@@ -5,10 +5,43 @@ const bcrypt = require('bcryptjs');
 const QRCode = require('qrcode');
 
 const app = express();
-app.use(cors());
+
+// ✅ CORS Configuration - Ye sabse important hai!
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://frontendbuild.pages.dev',
+  'https://fortune-hotel-voucher-system.vercel.app',
+  'https://fortune-hotel-system.netlify.app'
+];
+
+// Railway se variable read karo agar set hai toh
+const corsOrigins = process.env.CORS_ALLOWED_ORIGINS 
+  ? process.env.CORS_ALLOWED_ORIGINS.split(',')
+  : allowedOrigins;
+
+console.log('✅ CORS Allowed Origins:', corsOrigins);
+
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (corsOrigins.indexOf(origin) !== -1) {
+      console.log('✅ CORS allowed:', origin);
+      callback(null, true);
+    } else {
+      console.log('❌ CORS blocked:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept']
+}));
+
+app.options('*', cors());
 app.use(express.json());
 
-// In-memory storage (replace with MongoDB later)
+// In-memory storage
 let users = [];
 let hotels = [];
 let vouchers = [];
@@ -20,7 +53,7 @@ const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
   try {
-    const decoded = jwt.verify(token, 'secretkey');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secretkey');
     req.user = decoded;
     next();
   } catch (error) {
@@ -42,9 +75,9 @@ app.get('/api/auth/setup', async (req, res) => {
   const hashedPassword = await bcrypt.hash('Admin@123', 10);
   const users_list = [
     { _id: '1', email: 'admin@grandluxury.com', password: hashedPassword, role: 'super_admin', hotelId: '1', isActive: true },
-    { _id: '2', email: 'frontoffice@grandluxury.com', password: await bcrypt.hash('Front@123', 10), role: 'front_office', hotelId: '1', isActive: true },
-    { _id: '3', email: 'restaurant@grandluxury.com', password: await bcrypt.hash('Rest@123', 10), role: 'restaurant_manager', hotelId: '1', isActive: true, restaurantName: 'Main Restaurant' },
-    { _id: '4', email: 'accounts@grandluxury.com', password: await bcrypt.hash('Acc@123', 10), role: 'accounts', hotelId: '1', isActive: true }
+    { _id: '2', email: 'frontoffice@fortune.com', password: await bcrypt.hash('Front@123', 10), role: 'front_office', hotelId: '1', isActive: true },
+    { _id: '3', email: 'restaurant@fortune.com', password: await bcrypt.hash('Rest@123', 10), role: 'restaurant_manager', hotelId: '1', isActive: true, restaurantName: 'Main Restaurant' },
+    { _id: '4', email: 'accounts@fortune.com', password: await bcrypt.hash('Acc@123', 10), role: 'accounts', hotelId: '1', isActive: true }
   ];
   users.push(...users_list);
   res.json({ message: 'Setup complete! Users created.', users: users_list.map(u => ({ email: u.email, role: u.role, password: u.email.includes('admin') ? 'Admin@123' : u.email.includes('front') ? 'Front@123' : u.email.includes('restaurant') ? 'Rest@123' : 'Acc@123' })) });
@@ -53,18 +86,28 @@ app.get('/api/auth/setup', async (req, res) => {
 // Login
 app.post('/api/auth/login', async (req, res) => {
   const { email, password, subdomain } = req.body;
+  console.log('Login attempt:', { email, subdomain });
+  
   const hotel = hotels.find(h => h.subdomain === subdomain);
   if (!hotel) return res.status(401).json({ error: 'Invalid hotel domain' });
+  
   const user = users.find(u => u.email === email && u.hotelId === hotel._id);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  
   const valid = await bcrypt.compare(password, user.password);
   if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
   if (!user.isActive) return res.status(401).json({ error: 'Account disabled' });
-  const token = jwt.sign({ userId: user._id, role: user.role, hotelId: hotel._id, restaurantName: user.restaurantName }, 'secretkey', { expiresIn: '24h' });
+  
+  const token = jwt.sign(
+    { userId: user._id, role: user.role, hotelId: hotel._id, restaurantName: user.restaurantName }, 
+    process.env.JWT_SECRET || 'secretkey', 
+    { expiresIn: '24h' }
+  );
+  
   res.json({ token, user: { id: user._id, email: user.email, role: user.role, hotelId: hotel._id, restaurantName: user.restaurantName } });
 });
 
-// Create Voucher (Front Office)
+// Create Voucher
 app.post('/api/vouchers', auth, authorize(['front_office', 'super_admin']), async (req, res) => {
   const { guestName, passportEID, roomNumber, amount, expiryDate } = req.body;
   voucherCounter++;
@@ -82,13 +125,13 @@ app.post('/api/vouchers', auth, authorize(['front_office', 'super_admin']), asyn
   res.status(201).json(voucher);
 });
 
-// Get All Vouchers (Accounts)
+// Get All Vouchers
 app.get('/api/vouchers', auth, authorize(['accounts', 'super_admin']), (req, res) => {
   const userVouchers = vouchers.filter(v => v.hotelId === req.user.hotelId);
   res.json(userVouchers);
 });
 
-// Search Voucher (Restaurant)
+// Search Voucher
 app.get('/api/vouchers/search', auth, authorize(['restaurant_manager', 'super_admin']), (req, res) => {
   const { query } = req.query;
   const voucher = vouchers.find(v => v.hotelId === req.user.hotelId && 
@@ -99,7 +142,7 @@ app.get('/api/vouchers/search', auth, authorize(['restaurant_manager', 'super_ad
   res.json(voucher);
 });
 
-// Redeem Voucher (Restaurant)
+// Redeem Voucher
 app.post('/api/vouchers/redeem/:id', auth, authorize(['restaurant_manager', 'super_admin']), (req, res) => {
   const { amount, invoiceNumber } = req.body;
   const voucherIndex = vouchers.findIndex(v => v._id === req.params.id && v.hotelId === req.user.hotelId);
@@ -129,35 +172,16 @@ app.get('/api/transactions/voucher/:voucherId', auth, (req, res) => {
   res.json(voucherTransactions);
 });
 
-// Get Users (Super Admin)
+// Get Users
 app.get('/api/users', auth, authorize(['super_admin']), (req, res) => {
-  const hotelUsers = users.filter(u => u.hotelId === req.user.hotelId).map(u => ({ ...u, password: undefined }));
+  const hotelUsers = users.filter(u => u.hotelId === req.user.hotelId).map(u => {
+    const { password, ...userWithoutPassword } = u;
+    return userWithoutPassword;
+  });
   res.json(hotelUsers);
 });
 
-// Create User (Super Admin)
-app.post('/api/users', auth, authorize(['super_admin']), async (req, res) => {
-  const { email, password, role, restaurantName } = req.body;
-  const hashedPassword = await bcrypt.hash(password, 10);
-  const newUser = {
-    _id: String(Date.now()),
-    email, password: hashedPassword, role,
-    restaurantName: role === 'restaurant_manager' ? restaurantName : undefined,
-    hotelId: req.user.hotelId, isActive: true
-  };
-  users.push(newUser);
-  res.json({ message: 'User created', user: { ...newUser, password: undefined } });
-});
-
-app.get('/', (req, res) => {
-  res.json({ message: 'Hotel Voucher System API Running!', endpoints: ['/api/auth/setup', '/api/auth/login', '/api/vouchers', '/api/vouchers/search', '/api/vouchers/redeem/:id'] });
-});
-
-app.listen(5000, () => {
-  console.log('✅ Server running on http://localhost:5000');
-  console.log('📝 Setup: http://localhost:5000/api/auth/setup');
-});
-// Create User (Super Admin)
+// Create User
 app.post('/api/users', auth, authorize(['super_admin']), async (req, res) => {
   const { email, password, role, restaurantName, tasks, loginId, name } = req.body;
   const hashedPassword = await bcrypt.hash(password, 10);
@@ -174,11 +198,16 @@ app.post('/api/users', auth, authorize(['super_admin']), async (req, res) => {
   res.json({ message: 'User created successfully', user: { ...newUser, password: undefined } });
 });
 
-// Get All Users
-app.get('/api/users', auth, authorize(['super_admin']), (req, res) => {
-  const hotelUsers = users.filter(u => u.hotelId === req.user.hotelId).map(u => {
-    const { password, ...userWithoutPassword } = u;
-    return userWithoutPassword;
-  });
-  res.json(hotelUsers);
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ message: 'Hotel Voucher System API Running!', endpoints: ['/api/auth/setup', '/api/auth/login', '/api/vouchers', '/api/vouchers/search', '/api/vouchers/redeem/:id'] });
+});
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`📝 Setup: http://localhost:${PORT}/api/auth/setup`);
+  console.log(`🔐 Login: admin@grandluxury.com / Admin@123 / subdomain: fortune`);
+  console.log(`🌐 CORS enabled for:`, corsOrigins);
 });
